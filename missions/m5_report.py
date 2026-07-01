@@ -50,13 +50,57 @@ def run(verbose: bool = True) -> dict:
         "wh_per_query": wh,
         "carbon_g": sustainability.carbon_g(wh, "us-east-1"),
         "best_region": min(sustainability.REGION_CARBON, key=sustainability.REGION_CARBON.get),
+        "cheapest_region": min(sustainability.REGION_PRICE_KWH, key=sustainability.REGION_PRICE_KWH.get),
     }
+    sust["carbon_avoided_g"] = sust["carbon_g"] - sustainability.carbon_g(wh, sust["best_region"])
 
-    md = report.build_report(baseline, optimized, levers, sustainability=sust)
+    analysis = {
+        "util_lies": [f"{x['gpu_id']} (MFU={x['mfu']:.1%})" for x in r1["lies"]],
+        "cache": {
+            "break_even_reads": r2["cache_break_even_reads"],
+            "enabled_teams": r2["cache_enabled_teams"],
+        },
+        "reasoning": r2["reasoning"],
+    }
+    md = report.build_report(
+        baseline, optimized, levers, sustainability=sust,
+        unit_economics={
+            "baseline_per_m": r2["baseline_per_m"],
+            "optimized_per_m": r2["optimized_per_m"],
+            "lever_savings_daily": r2["lever_savings_daily"],
+        },
+        analysis=analysis,
+    )
     out_md = os.path.join(ROOT, "outputs", "report.md")
     os.makedirs(os.path.dirname(out_md), exist_ok=True)
     with open(out_md, "w") as f:
         f.write(md)
+    writeup = """# Lab 25 — Submission Notes
+
+The analysis prioritizes unit economics over hourly GPU price. The measured
+inference cost falls from ${baseline_pm:.3f} to ${optimized_pm:.3f} per million
+tokens. Cascade routing is the dominant inference lever; cache and batch add
+incremental savings after the routing decision.
+
+Two extensions are implemented and tested: cache break-even gating and a
+reasoning budget. Cache is enabled only when expected reuse exceeds
+{cache_be:.2f} reads. Reasoning represents {reasoning_traffic:.1f}% of requests
+but {reasoning_energy:.1f}% of energy, so routing it only for tasks with an
+explicit complexity signal is the immediate governance action.
+
+The infrastructure actions are to use spot for checkpointable jobs, reserved
+capacity for steady workloads, remove idle capacity, and investigate low-MFU
+GPUs before committing to expensive accelerators. The lowest-carbon region is
+{best_region}; deployment still requires latency and data-residency checks.
+""".format(
+        baseline_pm=r2["baseline_per_m"], optimized_pm=r2["optimized_per_m"],
+        cache_be=r2["cache_break_even_reads"],
+        reasoning_traffic=r2["reasoning"]["traffic_pct"],
+        reasoning_energy=r2["reasoning"]["energy_share_pct"],
+        best_region=sust["best_region"],
+    )
+    with open(os.path.join(ROOT, "outputs", "writeup.md"), "w") as f:
+        f.write(writeup)
     png = report.savings_waterfall(levers, os.path.join(ROOT, "outputs", "savings.png"))
 
     if verbose:

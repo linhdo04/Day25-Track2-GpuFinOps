@@ -52,6 +52,29 @@ def discount_stack(
     return cache_mult * batch_mult
 
 
+def cache_break_even_reads(write_cost: float = 1.25, read_discount: float = 0.10) -> float:
+    """Return the minimum repeated reads needed to recover one cache write.
+
+    ``write_cost`` and ``read_discount`` are multiples of the normal input-token
+    price.  A 1.25x write followed by 0.10x reads breaks even after 1.39 reads,
+    so an operational policy should require at least two reads.
+    """
+    if write_cost < 0:
+        raise ValueError("write_cost must be non-negative")
+    if not 0 <= read_discount < 1:
+        raise ValueError("read_discount must be in [0, 1)")
+    return write_cost / (1.0 - read_discount)
+
+
+def cache_is_worth_it(
+    avg_reads: float,
+    write_cost: float = 1.25,
+    read_discount: float = 0.10,
+) -> bool:
+    """Whether expected cache reuse exceeds the economic break-even point."""
+    return avg_reads > cache_break_even_reads(write_cost, read_discount)
+
+
 def break_even_utilization(discount_frac: float) -> float:
     """Utilization at which a commitment pays off ~= 1 - discount.
 
